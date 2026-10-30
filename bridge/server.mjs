@@ -21,6 +21,11 @@ import { displayServer } from './panels.mjs'
 import { uiServer } from './ui.mjs'
 import { chromeAvailable, chromeServer } from './chrome.mjs'
 import { visionServer } from './vision.mjs'
+import { pcServer, systemStatus } from './pc.mjs'
+import { memoryServer, memorySnapshot } from './memory.mjs'
+
+/** Last /system read, shared by every poll inside its few seconds of life. */
+let systemCache = null
 import { homedir, tmpdir } from 'node:os'
 import { readFileSync, realpathSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -137,7 +142,10 @@ const READ_ONLY_BUILTINS = new Set([
   'BashOutput', 'TaskOutput',
 ])
 const WRITE_BUILTINS = new Set([
-  'Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit',
+  // PowerShell is the Windows shell tool, Bash's twin. Left off this list it
+  // still fell to the write default, but it slipped past every check that asks
+  // "is this a write tool?" — the own-folder guard among them.
+  'Bash', 'PowerShell', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit',
   'KillShell', 'TaskStop',
 ])
 
@@ -252,6 +260,43 @@ const VETO_EXEMPT = new Set([
   'openrouter__send-feedback',
 ])
 
+/**
+ * JARVIS's own folder, in every spelling a command might use for it.
+ *
+ * With writes on, Bash can reach anything, including the files this process is
+ * running from — and a project that deletes itself mid-conversation is a
+ * project that is gone. So any write tool whose input names this folder is
+ * refused, however the path is written: either slash, any case, ~ or not.
+ */
+const OWN_DIR = resolvePath(import.meta.dirname, '..')
+const OWN_DIR_FORMS = (() => {
+  const back = OWN_DIR.toLowerCase()
+  const fwd = back.replace(/\\/g, '/')
+  const forms = new Set([back, fwd, fwd.replace(/^([a-z]):/, '/$1')])
+  const home = homedir().toLowerCase()
+  if (back.startsWith(home)) {
+    const rest = back.slice(home.length)
+    forms.add(`~${rest}`)
+    forms.add(`~${rest.replace(/\\/g, '/')}`)
+    forms.add(`$home${rest}`)
+    forms.add(`$env:userprofile${rest}`)
+    forms.add(`%userprofile%${rest}`)
+    // Relative to the home directory, which is the agent's working directory:
+    // `cd Desktop/jarvis && ...` names the folder without any of the above.
+    forms.add(rest.slice(1))
+    forms.add(rest.slice(1).replace(/\\/g, '/'))
+  }
+  return [...forms]
+})()
+
+function touchesOwnFolder(input) {
+  const s = JSON.stringify(input ?? {})
+    .toLowerCase()
+    // JSON escapes every backslash; undo it so C:\\Users reads as C:\Users.
+    .replace(/\\\\/g, '\\')
+  return OWN_DIR_FORMS.some((f) => s.includes(f))
+}
+
 function decideTool(name) {
   if (READ_ONLY_BUILTINS.has(name)) return true
   if (WRITE_BUILTINS.has(name)) return ALLOW_WRITES
@@ -279,6 +324,15 @@ function decideTool(name) {
     // indicator the user can see for as long as it is live.
     if (server === 'jarvis_eyes') return true
 
+    // The computer itself. Like the browser it gates itself at construction:
+    // pcServer() only builds open, close, volume, media, clipboard writes and
+    // lock when ALLOW_WRITES is set, so what reaches here is already permitted.
+    if (server === 'jarvis_pc') return true
+
+    // The user's to-do list and saved clips: their own notes, in their own
+    // home directory, written by this process. Nothing here reaches the world.
+    if (server === 'jarvis_memory') return true
+
     const tool = mcpToolOf(name)
     if (EFFECTFUL_VERB.test(tool) && !VETO_EXEMPT.has(`${server}__${tool}`)) {
       return ALLOW_WRITES
@@ -291,6 +345,11 @@ function decideTool(name) {
 }
 
 const SYSTEM_PROMPT = `You are JARVIS. You are speaking out loud to one person.
+
+LANGUAGE — THE FIRST RULE. You speak SPANISH. Every answer, every word, in
+Spanish, and "sir" is always "señor". These instructions are written in English;
+your answers never are. Only if the user speaks to you in another language do
+you answer in that one.
 
 LENGTH. Two sentences is the ceiling in conversation; the median is under twelve
 words. Every word is read aloud and the user waits in silence while it plays, so
@@ -320,6 +379,14 @@ REPORTING.
 - Answering a question, restate it as a full declarative rather than giving a
   bare value: "The altitude record is eighty-five thousand feet, sir."
 - Executing an order, do not restate it. Act, then report.
+
+WHEN SOMETHING FAILS, STOP.
+- If a tool fails, is refused, or the thing cannot be done, do not try again
+  and do not look for another way round it on your own initiative. No second
+  attempt, no alternative tool, no workaround.
+- Say once, in one sentence, what failed. You may offer one alternative as a
+  question — "Shall I try it another way, sir?" — then end your turn.
+- Wait for their order. Only try again, or try something else, when they tell you to.
 
 NEVER.
 - No filler words at all: no um, well, so, okay, right, let me check, one moment.
@@ -398,15 +465,15 @@ browser or a web page:
 - NEVER use playwright, puppeteer, or any other browser automation server for
   this. They start from an empty profile with no session and a fingerprint that
   the sites worth visiting refuse on sight, so they land on a login wall or a
-  bot check and waste the turn. Only consider one if \`chrome_status\` reports the
-  browser is genuinely unreachable and the task cannot be done any other way.
+  bot check and waste the turn. Not even when Chrome fails: then you stop and
+  wait for their order.
 - A plain search engine query is still fine for a fact you only need to know —
   what you must not do is drive some other browser.
 - Read the page before acting on it, and take element references from that read
   rather than guessing where something is.
 - Before anything that sends, buys, deletes or posts, say in one sentence what
   you are about to do. After it, say what happened.
-- If the browser is unreachable, say so once and carry on without it.
+- If the browser is unreachable, say so once and wait for their order.
 
 Your eyes:
 - \`look\` takes one frame and lets you see it. \`watch\` takes several seconds and
@@ -426,6 +493,48 @@ Your eyes:
 - Describe a watch as a sequence — what changed between the frames — not as a
   list of pictures. They know what their own hands look like.
 
+Their computer — the \`pc_*\` tools, before Bash for anything they cover:
+- Programs: \`pc_open\` opens a program, website, folder or file by the name
+  they used; \`pc_close\` closes one; \`pc_apps\` lists what is open.
+- Sound and music: \`pc_volume\` sets, steps or mutes; \`pc_media\` is play,
+  pause, next and previous for whatever is playing.
+- \`pc_screen\` looks at their screen, but only while they share it with the
+  PANTALLA button. \`pc_status\` is processor, memory, battery and disk.
+- \`pc_clipboard_read\` and \`pc_clipboard_write\` for what they copy and paste;
+  \`pc_lock\` locks the machine.
+- Act, then report in a few words: "Spotify is open." Never close anything they
+  did not name.
+
+Their to-do list — the \`task*\` tools. It persists between conversations:
+- When they say something they have to do ("tengo que", "recuérdame",
+  "apunta", "añade"), add it with \`task_add\`, in their words.
+- "¿Qué tengo que hacer?" — read \`tasks_list\` first, never answer from memory.
+  Say how many are pending and name them briefly, numbers included.
+- When they say they finished something, \`task_done\` it, and say what is left.
+- The list is on screen on the left, so after a change confirm in a few words.
+
+Saved clips — a clipboard with many slots, the \`clip_*\` tools:
+- "Guarda esto" or "guarda lo que copié" — \`clip_save\`, with a label when they
+  name it. With no text it keeps whatever is on the clipboard now.
+- "Dame", "copia" or "pega" a saved thing — \`clip_copy\` puts it back on the
+  clipboard, ready to paste. Say it is ready; do not read it aloud unless asked.
+
+Research — "investiga", "busca información", "find out about":
+- Use their Chrome. \`chrome_navigate\` to https://www.google.com/search?q= and
+  their words, then \`chrome_page_text\` to read the results.
+- Open the two or three best sources and read them. Never more than three:
+  every page read costs, and the fourth rarely changes the answer.
+- Put what you found on a blade with \`display\`: a headline, three to five key
+  points, and each source as a short tag. That is where the detail lives.
+- Speak only the answer, in two sentences at most. Never narrate the search.
+- A quick fact needs one search and no blade.
+
+Files — never lose their work:
+- Never delete, move or overwrite a file or folder unless they asked for that
+  exact thing. Before deleting anything, say in one sentence what will go and
+  wait for their yes.
+- Never touch JARVIS's own folder. It is the program you are running in.
+
 Using tools:
 - You have real tools on this machine. Use them rather than guessing.
 - Never narrate that you're about to use one. No "Let me search for that" or
@@ -436,7 +545,9 @@ Using tools:
   is read out loud, and a URL becomes "aitch tee tee pee colon slash slash".
   Put the source in the panel as a short tag like "REUTERS" instead.
 - If a tool fails or isn't connected, one plain sentence saying so.
-- If you don't know, say you don't know.`
+- If you don't know, say you don't know.
+
+Remember: answer in Spanish, and say "señor", never "sir".`
 
 /**
  * ElevenLabs credentials, borrowed from the MCP server config.
@@ -685,6 +796,24 @@ const handleRequest = async (req, res) => {
     const eleven = Boolean(elevenKey())
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
     return res.end(JSON.stringify({ ok: true, tts: eleven, stt: eleven }))
+  }
+
+  if (req.method === 'GET' && req.url === '/memory') {
+    // The HUD's task list. A small file read, so it is not cached: a task
+    // ticked off by voice should leave the screen at the next poll.
+    res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify(memorySnapshot()))
+  }
+
+  if (req.method === 'GET' && req.url === '/system') {
+    // The HUD's telemetry rail. Read through the same code pc_status speaks
+    // from, and cached, because each read is a PowerShell process and the HUD
+    // polls whether or not anyone is looking.
+    if (!systemCache || Date.now() - systemCache.at > 4000) {
+      systemCache = { at: Date.now(), data: await systemStatus() }
+    }
+    res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify(systemCache.data))
   }
 
   // Serve local image files to the page. Screenshots and generated art land on
@@ -1138,6 +1267,18 @@ wss.on('connection', (socket) => {
   const heldTools = new Map()
 
   /**
+   * Failed tool calls in the turn in flight.
+   *
+   * Left alone, the model treats a failure as a puzzle and keeps trying other
+   * routes, burning tokens on something the user may not even want any more.
+   * The prompt tells it to stop and wait; this makes that binding. Once the
+   * count reaches the limit every further tool is refused, so the only thing
+   * left to do is say what went wrong and end the turn.
+   */
+  let toolFailures = 0
+  const MAX_TOOL_FAILURES = Number(process.env.JARVIS_MAX_FAILURES ?? 2)
+
+  /**
    * Resolves when the turn in flight has actually finished.
    *
    * Waiting on session.interrupt() alone is not enough. It resolves when the
@@ -1190,6 +1331,7 @@ wss.on('connection', (socket) => {
     if (!failed) sendTurn({ type: 'tool', name })
   }
 
+  const pc = pcServer({ allowWrites: ALLOW_WRITES, ask })
   const session = query({
     prompt: userMessages(),
     options: {
@@ -1214,6 +1356,11 @@ wss.on('connection', (socket) => {
         jarvis_chrome: chromeServer({ allowWrites: ALLOW_WRITES }),
         // The camera, which unlike everything else here has to ask and wait.
         jarvis_eyes: visionServer(ask),
+        // The computer itself — programs, sound, screen, clipboard. Windows
+        // only; elsewhere pcServer returns null and the key is dropped.
+        ...(pc ? { jarvis_pc: pc } : {}),
+        // The to-do list and saved clips, which outlive the conversation.
+        jarvis_memory: memoryServer(),
       },
       // A plain system prompt, not the claude_code preset. The preset is
       // tuned for a coding agent — verbose, file-oriented, and a large chunk
@@ -1246,7 +1393,7 @@ wss.on('connection', (socket) => {
       // without this line nothing in the project has a say at all.
       model: MODEL,
       effort: EFFORT,
-      maxTurns: 24,
+      maxTurns: Number(process.env.JARVIS_MAX_TURNS ?? 24),
       permissionMode: 'default',
       // Without this the SDK only emits whole assistant messages, and JARVIS
       // would sit silent until the entire answer was written. Partial events
@@ -1261,7 +1408,26 @@ wss.on('connection', (socket) => {
       // through a `Bash: echo hello` without asking, and only reaches us for
       // something with a consequence, like a `touch`. So a deny here is
       // reliable; an absence of a call here is not proof nothing ran.
-      canUseTool: async (toolName) => {
+      canUseTool: async (toolName, input) => {
+        if (WRITE_BUILTINS.has(toolName) && touchesOwnFolder(input)) {
+          console.log(`[jarvis] tool ${toolName} -> deny (JARVIS's own folder)`)
+          return {
+            behavior: 'deny',
+            message:
+              "Blocked: that would change JARVIS's own program files. Tell the" +
+              ' user in one sentence that you cannot modify yourself, and stop.',
+          }
+        }
+        if (toolFailures >= MAX_TOOL_FAILURES) {
+          console.log(`[jarvis] tool ${toolName} -> deny (stopped after ${toolFailures} failures)`)
+          return {
+            behavior: 'deny',
+            message:
+              'Stopped: this request has already failed. Do not try again or' +
+              ' look for another way. Tell the user in one sentence what went' +
+              ' wrong, then end your turn and wait for their instruction.',
+          }
+        }
         const ok = decideTool(toolName)
         console.log(`[jarvis] tool ${toolName} -> ${ok ? 'allow' : 'deny'}`)
         return ok
@@ -1331,6 +1497,7 @@ wss.on('connection', (socket) => {
             for (const block of blocks) {
               if (block?.type === 'tool_result') {
                 settleTool(block.tool_use_id, block.is_error === true)
+                if (block.is_error === true) toolFailures++
               }
             }
             break
@@ -1366,6 +1533,8 @@ wss.on('connection', (socket) => {
             // otherwise grow for as long as the socket is open.
             seenTools.clear()
             heldTools.clear()
+            // A new request gets a clean slate.
+            toolFailures = 0
             break
 
           case 'system':

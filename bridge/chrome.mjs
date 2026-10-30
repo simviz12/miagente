@@ -82,6 +82,17 @@ const CONNECT_TIMEOUT_MS = 3_000
  * accepted as a last resort, because on some setups it is all there is.
  */
 async function findSocket() {
+  // Windows has no socket directory: the native host listens on one named pipe
+  // per user, with a fixed name. Listing \\.\pipe\ tells us whether it is up.
+  if (process.platform === 'win32') {
+    const pipe = `claude-mcp-browser-bridge-${userInfo().username}`
+    try {
+      const pipes = await readdir('\\\\.\\pipe\\')
+      return pipes.includes(pipe) ? `\\\\.\\pipe\\${pipe}` : null
+    } catch {
+      return null
+    }
+  }
   let names
   try {
     names = await readdir(SOCKET_DIR)

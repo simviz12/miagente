@@ -1896,3 +1896,185 @@ kbd {
   transform: scaleX(-1);
   background: #000;
 }
+
+/* Telemetry — the machine, read live, on the right rail. Rings rather than
+   bars because a ring is the shape the reactor already speaks in. */
+
+.telemetry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.clock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+.clock-time {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 26px;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.clock-sec {
+  font-size: 11px;
+  margin-left: 4px;
+  opacity: 0.55;
+}
+.clock-date {
+  font-size: 8px;
+  letter-spacing: 0.26em;
+  opacity: 0.5;
+}
+
+.gauge {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 10px;
+}
+.gauge-ring {
+  width: 44px;
+  height: 44px;
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+.gauge-track {
+  fill: none;
+  stroke: color-mix(in srgb, var(--accent) 16%, transparent);
+  stroke-width: 2.5;
+}
+.gauge-fill {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 4px var(--accent));
+  transition: stroke-dashoffset 900ms cubic-bezier(0.2, 0.8, 0.2, 1), stroke 400ms ease;
+}
+.gauge-num {
+  /* The ring is rotated so it fills from twelve o'clock; the number is turned
+     back so it reads upright. */
+  transform: rotate(90deg);
+  transform-origin: 24px 24px;
+  text-anchor: middle;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  fill: currentColor;
+}
+.gauge-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+.gauge-label {
+  font-size: 10px;
+  letter-spacing: 0.24em;
+}
+.gauge-detail {
+  font-size: 7.5px;
+  letter-spacing: 0.16em;
+  opacity: 0.45;
+}
+.gauge-warn { color: #ff5a5a; }
+.gauge-warn .gauge-fill { stroke: #ff5a5a; filter: drop-shadow(0 0 5px #ff5a5a); }
+.gauge-warn .gauge-ring { animation: handsPulse 1.6s ease-in-out infinite; }
+
+/* Screen sharing — the one switch on the glass. Bottom right, clear of the
+   transcript and the legend. */
+
+.screen-btn {
+  position: absolute;
+  right: 92px;
+  bottom: 38px;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, rgba(2, 8, 12, 0.6));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  cursor: pointer;
+  transition: background 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+}
+.screen-btn:hover {
+  background: color-mix(in srgb, var(--accent) 16%, rgba(2, 8, 12, 0.6));
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.screen-dot {
+  width: 6px;
+  height: 6px;
+  border: 1px solid currentColor;
+  transform: rotate(45deg);
+}
+.screen-btn.on { color: #ff6b6b; border-color: rgba(255, 107, 107, 0.55); }
+.screen-btn.on .screen-dot {
+  background: #ff4d4d;
+  border-color: #ff4d4d;
+  box-shadow: 0 0 8px #ff4d4d;
+  animation: handsPulse 1.6s ease-in-out infinite;
+}
+.screen-btn.failed { border-color: rgba(255, 107, 107, 0.55); }
+
+/* The to-do list, under the modules on the left rail. Set in sentence case:
+   these are the user's own words, not machine readouts. */
+
+.tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 18px;
+  max-width: 240px;
+}
+.tasks-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  opacity: 1;
+  letter-spacing: 0.1em;
+}
+.task {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.task-box {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: inset 0 0 6px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.task-text { opacity: 0.9; }
+.task-due {
+  display: block;
+  font-size: 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+.task-done { opacity: 0.38; }
+.task-done .task-text { text-decoration: line-through; }
+.task-done .task-box {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.clips-note { margin-top: 6px; font-size: 8px; }

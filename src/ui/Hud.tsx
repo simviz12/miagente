@@ -6,16 +6,28 @@ import { BladeSweep, Blades } from './Blades'
 import { Effects } from './Effects'
 import { Pointer } from './Pointer'
 import { GestureGuide } from './GestureGuide'
+import { ScreenButton, Telemetry } from './Telemetry'
+import { Tasks } from './Tasks'
+
+/** The bridge's internal server names, as the rail should say them. */
+const MODULE_NAMES: Record<string, string> = {
+  jarvis: 'Paneles',
+  jarvis_ui: 'Interfaz',
+  jarvis_chrome: 'Chrome',
+  jarvis_eyes: 'Cámara',
+  jarvis_pc: 'Control del PC',
+  jarvis_memory: 'Memoria',
+}
 
 const statusText: Record<Phase, string> = {
-  offline: 'OFFLINE',
-  boot: 'INITIALISING',
-  dormant: 'STANDBY — SAY “HEY JARVIS”',
-  waking: 'ONLINE',
-  listening: 'LISTENING',
-  thinking: 'PROCESSING',
-  tooling: 'ACCESSING SYSTEMS',
-  speaking: 'RESPONDING',
+  offline: 'DESCONECTADO',
+  boot: 'INICIANDO',
+  dormant: 'EN ESPERA — DI “HEY JARVIS”',
+  waking: 'EN LÍNEA',
+  listening: 'ESCUCHANDO',
+  thinking: 'PROCESANDO',
+  tooling: 'ACCEDIENDO A SISTEMAS',
+  speaking: 'RESPONDIENDO',
 }
 
 function Corner({ at }: { at: 'tl' | 'tr' | 'bl' | 'br' }) {
@@ -210,24 +222,26 @@ export function Hud() {
       {/* Left rail: which integrations are live */}
       {ui.chrome.systems && (
         <aside className="rail rail-left">
-          <div className="rail-title">SYSTEMS</div>
-          {connected.length === 0 && <div className="rail-item dim">none linked</div>}
+          <div className="rail-title">MÓDULOS</div>
+          {connected.length === 0 && <div className="rail-item dim">ninguno</div>}
           {connected.map((c) => (
             <div key={c} className="rail-item">
               <span className="tick" />
-              {c}
+              {MODULE_NAMES[c] ?? c}
             </div>
           ))}
           <div className="rail-item">
             <span className="tick" />
             Web
           </div>
+          <Tasks />
         </aside>
       )}
 
-      {/* Right rail: live telemetry, mostly for flavour */}
+      {/* Right rail: the machine itself, then the microphone level */}
       <aside className="rail rail-right">
-        <div className="rail-title">SIGNAL</div>
+        {ui.chrome.systems && <Telemetry />}
+        <div className="rail-title">SEÑAL</div>
         <div className="meter">
           <div className="meter-fill" style={{ height: `${level * 100}%` }} />
         </div>
@@ -310,13 +324,15 @@ export function Hud() {
 
       {error && <div className="error">{error}</div>}
 
+      <ScreenButton />
+
       <footer className="hud-bottom">
         <span className="hint">
-          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>G</kbd> hands
+          di <b>“hey jarvis”</b> · <kbd>Espacio</kbd> para hablar · <kbd>G</kbd> manos
           {voice && (
             <>
               {' · '}
-              <kbd>V</kbd> voice: {voice.replace(/\(.*?\)/g, '').trim()}
+              <kbd>V</kbd> voz: {voice.replace(/\(.*?\)/g, '').trim()}
             </>
           )}
         </span>
@@ -332,7 +348,7 @@ export function Hud() {
       <Pointer />
       {(gestures || looking) && (
         <div className="hands-live">
-          {looking ? `LOOKING — ${looking.toUpperCase()}` : 'CAMERA ON · G TO STOP'}
+          {looking ? `MIRANDO — ${looking.toUpperCase()}` : 'CÁMARA ACTIVA · G PARA PARAR'}
         </div>
       )}
       <GestureGuide live={gestures} />

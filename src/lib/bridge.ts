@@ -1,6 +1,7 @@
 import type { AskHandlers } from './anthropic'
 import type { Blade, Panel } from '../store'
 import { BRIDGE_WS_URL } from '../config'
+import { grabScreen } from './screen'
 
 /**
  * Client for the local bridge (see bridge/server.mjs).
@@ -188,7 +189,13 @@ function dispatch(ws: WebSocket) {
           ws.send(JSON.stringify({ type: 'reply', id, ...payload }))
         }
       }
-      if (!onCapture) {
+      if (msg.mode === 'screen') {
+        // The screen, not the camera: answered here, from the share the user
+        // switched on with the SCREEN button.
+        grabScreen()
+          .then(reply)
+          .catch((err) => reply({ error: String(err?.message ?? err) }))
+      } else if (!onCapture) {
         reply({ error: 'The interface has no camera handler.' })
       } else {
         // Always answers, even on failure: the bridge is holding a turn open
